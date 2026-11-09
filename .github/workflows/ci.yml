@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# a newer push to the same branch or pull request replaces a run still going
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-features --all-targets -- -D warnings
+      - run: cargo test --workspace --all-features
+      - name: The C header was committed as the code makes it
+        shell: bash
+        run: git diff --exit-code -- crates/hdmv-menus-c/include/hdmv_menus.h
+
+  msrv:
+    name: Oldest Rust supported (1.77)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.77
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p hdmv-menus --all-features
+
+  python:
+    name: Python ${{ matrix.python }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.14" }
+          - { os: windows-latest, python: "3.14" }
+          - { os: macos-latest, python: "3.14" }
+          # the oldest supported: where GitHub's runners still have it (Ubuntu 26.04 doesn't)
+          - { os: ubuntu-24.04, python: "3.9" }
+          - { os: windows-latest, python: "3.9" }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build and install the package (as pip does from source)
+        run: pip install "./crates/hdmv-menus-py[test]"
+      - run: pytest -q crates/hdmv-menus-py/tests
+
+  c:
+    name: C (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p hdmv-menus-c
+      - name: Build the example (gcc)
+        if: runner.os == 'Linux'
+        run: gcc -Wall -Wextra -Werror -I crates/hdmv-menus-c/include examples/c/list_menus.c -L target/release -lhdmvmenus -o list_menus
+      - name: Build the example (clang)
+        if: runner.os == 'macOS'
+        run: clang -Wall -Wextra -Werror -I crates/hdmv-menus-c/include examples/c/list_menus.c -L target/release -lhdmvmenus -o list_menus
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Build the example (MSVC)
+        if: runner.os == 'Windows'
+        run: |
+          cl /nologo /W4 /WX /I crates\hdmv-menus-c\include examples\c\list_menus.c target\release\hdmvmenus.dll.lib /Fe:list_menus.exe
+          copy target\release\hdmvmenus.dll .
+      - name: "Run it on an empty folder: no disc, so no menus and no error"
+        shell: bash
+        run: |
+          mkdir -p empty-disc
+          LD_LIBRARY_PATH=target/release DYLD_LIBRARY_PATH=target/release ./list_menus empty-disc | tee out.txt
+          grep -q 'menus: \[\]' out.txt

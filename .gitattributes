@@ -1,0 +1,3 @@
+# (the C header is made on every build, with LF: kept LF so it compares equal on every system)
+* text=auto
+*.h text eol=lf

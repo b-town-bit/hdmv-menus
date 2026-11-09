@@ -1,0 +1,16 @@
+target/
+.venv/
+*.pyd
+*.pdb
+*.so
+__pycache__/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+# what a run writes: a disc's own menus stay off the repository
+out/
+menus/
+*.png
+*.bin

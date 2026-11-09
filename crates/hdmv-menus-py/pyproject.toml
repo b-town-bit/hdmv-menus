@@ -1,0 +1,33 @@
+[build-system]
+requires = ["maturin>=1.5,<2"]
+build-backend = "maturin"
+
+[project]
+name = "hdmv-menus"
+description = "A Blu-ray's HDMV menus read from its files, nothing played: pages, buttons, pictures and commands."
+readme = "../../README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Brady Field" }]
+requires-python = ">=3.9"
+dynamic = ["version"]
+keywords = ["blu-ray", "bluray", "hdmv", "menu", "bdmv"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Video",
+]
+
+[project.urls]
+Repository = "https://github.com/b-town-bit/hdmv-menus"
+
+[project.optional-dependencies]
+draw = ["Pillow"]
+test = ["pytest", "Pillow"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "hdmv_menus._native"
+features = ["extension-module"]
+# (what local builds leave beside the package)
+exclude = ["python/hdmv_menus/*.pdb", "python/hdmv_menus/*.pyd", "python/hdmv_menus/*.so"]

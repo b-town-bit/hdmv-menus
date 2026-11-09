@@ -1,0 +1,13 @@
+[workspace]
+members = ["crates/hdmv-menus", "crates/hdmv-menus-py", "crates/hdmv-menus-c"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.77"
+authors = ["Brady Field"]
+# (the repository's address: change here if it's named otherwise)
+repository = "https://github.com/b-town-bit/hdmv-menus"
+homepage = "https://github.com/b-town-bit/hdmv-menus"

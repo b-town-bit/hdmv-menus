@@ -1,0 +1,32 @@
+[package]
+name = "hdmv-menus"
+description = "A Blu-ray's HDMV menus read from its files, nothing played: pages, buttons, pictures and commands."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/hdmv-menus"
+readme = "../../README.md"
+keywords = ["blu-ray", "bluray", "hdmv", "menu", "bdmv"]
+categories = ["multimedia::video", "parser-implementations"]
+
+[features]
+default = ["aacs"]
+# load a libaacs-compatible library the caller has, to read encrypted clips
+aacs = ["dep:libloading"]
+# the command-line tool (writes JSON and PNG)
+cli = ["dep:serde_json", "dep:png"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+libloading = { version = "0.8", optional = true }
+serde_json = { version = "1", optional = true }
+png = { version = "0.17", optional = true }
+
+[[bin]]
+name = "hdmv-menus"
+path = "src/bin/hdmv-menus.rs"
+required-features = ["cli"]

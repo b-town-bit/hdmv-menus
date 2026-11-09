@@ -1,0 +1,25 @@
+[package]
+name = "hdmv-menus-py"
+description = "Python bindings for hdmv-menus."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+hdmv-menus = { path = "../hdmv-menus" }
+serde = "1"
+serde_json = "1"
+# abi3: one wheel per platform for Python 3.9 and every later version
+pyo3 = { version = "0.30", features = ["abi3-py39"] }
+
+[features]
+extension-module = ["pyo3/extension-module"]
