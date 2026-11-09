@@ -28,14 +28,14 @@ jobs:
           - { os: macos-latest, target: x86_64 }
           - { os: macos-latest, target: aarch64 }
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: PyO3/maturin-action@v1
         with:
           working-directory: crates/hdmv-menus-py
           target: ${{ matrix.target }}
           manylinux: auto
           args: --release --out dist
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.target }}
           path: crates/hdmv-menus-py/dist
@@ -44,13 +44,13 @@ jobs:
     name: Source package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: PyO3/maturin-action@v1
         with:
           working-directory: crates/hdmv-menus-py
           command: sdist
           args: --out dist
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: crates/hdmv-menus-py/dist
@@ -69,11 +69,11 @@ jobs:
           - { os: ubuntu-24.04, python: "3.9" }
           - { os: windows-latest, python: "3.9" }
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           pattern: wheels-*
           merge-multiple: true
@@ -95,7 +95,7 @@ jobs:
           - { os: windows-latest, name: windows-x64 }
           - { os: macos-latest, name: macos-arm64 }
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release -p hdmv-menus-c
       - name: Package the libraries and the header
@@ -109,7 +109,7 @@ jobs:
             if [ -f target/release/$f ]; then cp target/release/$f $out/lib/; fi
           done
           if [ "$RUNNER_OS" = "Windows" ]; then 7z a $out.zip $out >/dev/null; else tar czf $out.tar.gz $out; fi
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: c-${{ matrix.name }}
           path: hdmv-menus-c-${{ matrix.name }}.*
@@ -118,7 +118,7 @@ jobs:
     name: Crate (checked)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo publish -p hdmv-menus --dry-run
 
@@ -135,7 +135,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           pattern: "{wheels-*,sdist}"
           merge-multiple: true
@@ -149,7 +149,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: crates-io
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       # a crates.io API token, saved in the repository's secrets as CARGO_REGISTRY_TOKEN
       - run: cargo publish -p hdmv-menus
@@ -164,11 +164,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           files: |
