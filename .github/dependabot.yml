@@ -7,6 +7,10 @@ updates:
     groups:
       rust:
         patterns: ["*"]
+    # (while Rust 1.77 is the oldest supported, workspace rust-version: libloading 0.9 needs 1.88)
+    ignore:
+      - dependency-name: libloading
+        versions: [">=0.9"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
