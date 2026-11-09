@@ -22,9 +22,9 @@ cli = ["dep:serde_json", "dep:png"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-libloading = { version = "0.8", optional = true }
+libloading = { version = "0.9", optional = true }
 serde_json = { version = "1", optional = true }
-png = { version = "0.17", optional = true }
+png = { version = "0.18", optional = true }
 
 [[bin]]
 name = "hdmv-menus"
