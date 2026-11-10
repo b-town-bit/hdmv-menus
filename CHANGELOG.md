@@ -1,6 +1,12 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.1 (2026-11-09)
+
+- A button's `then` (what plays after it) is followed only for a playlist it plays from its start, as a Play
+  All does; a jump into one at a mark or a play item (a chapter) has none. Following it for each of a film's
+  chapter buttons made reading a disc's menus take minutes (Order of the Phoenix: 4 min 40 s, now 7 s).
+
+## 0.1.0 (2026-11-09)
 
 First version.
 

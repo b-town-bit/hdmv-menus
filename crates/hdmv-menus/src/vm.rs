@@ -47,10 +47,11 @@ pub enum Outcome {
     StepLimit,
 }
 
-/// What a button does, pressed: its page, its id, and the outcome; one that plays, the playlists its
-/// programs play after it, in turn, each let play to its end (`then`: a Play All that plays the first
-/// episode's own playlist and goes on to the next, Chuck's), until one comes round again or nothing
-/// more plays (as far as THEN_LIMIT).
+/// What a button does, pressed: its page, its id, and the outcome; one that plays a playlist from its
+/// start, the playlists its programs play after it, in turn, each let play to its end (`then`: a Play All
+/// that plays the first episode's own playlist and goes on to the next, Chuck's), until one comes round
+/// again or nothing more plays (as far as THEN_LIMIT). A jump into a playlist at a mark or a play item (a
+/// chapter) has none.
 #[derive(Debug, Clone, Serialize)]
 pub struct ButtonLink {
     pub page: u8,
@@ -448,8 +449,11 @@ pub fn links(start: &Machine, composition: &crate::ig::Composition) -> Vec<Butto
         for button in page.buttons() {
             let mut machine = start.clone();
             let outcome = machine.press_through(composition, page.id, button);
+            // (what plays after it: only for a playlist played from its start, as a Play All plays it; a jump
+            // into one at a mark or a play item, a chapter's, goes on with the film's own program, and following
+            // that for each of a film's dozens of chapter buttons took Order of the Phoenix minutes)
             let then = match outcome {
-                Outcome::Play { playlist, .. } => machine.played_after(playlist),
+                Outcome::Play { playlist, item: None, mark: None, .. } => machine.played_after(playlist),
                 _ => Vec::new(),
             };
             out.push(ButtonLink { page: page.id, button: button.id, outcome, then });
@@ -605,6 +609,7 @@ mod tests {
         let c = Composition { width: 1920, height: 1080, stream_model: "preloaded", ui_model: "pop-up", pages: vec![page] };
         let got = links(&m, &c);
         assert_eq!(got[0].outcome, Outcome::Play { playlist: 60, item: None, mark: Some(7), title: None, object: None });
+        assert!(got[0].then.is_empty()); // (a chapter's jump into the film: nothing followed after it)
     }
 
     #[test]
