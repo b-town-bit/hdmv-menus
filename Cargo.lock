@@ -108,7 +108,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "hdmv-menus"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libloading",
  "png",
@@ -118,7 +118,7 @@ dependencies = [
 
 [[package]]
 name = "hdmv-menus-c"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cbindgen",
  "hdmv-menus",
@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "hdmv-menus-py"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "hdmv-menus",
  "pyo3",

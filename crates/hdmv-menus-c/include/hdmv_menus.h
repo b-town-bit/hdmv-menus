@@ -20,6 +20,12 @@ typedef struct HdmvDisc HdmvDisc;
 // One menu stream, decoded: made by hdmv_disc_menu, freed by hdmv_menu_free.
 typedef struct HdmvMenu HdmvMenu;
 
+// Bytes: `length` of them at `data`. Freed by hdmv_bytes_free.
+typedef struct HdmvBytes {
+  uint8_t *data;
+  size_t length;
+} HdmvBytes;
+
 // A picture: `width` by `height` pixels, 4 bytes each (red, green, blue, alpha; straight alpha), row
 // by row, and where it goes on its page (`x`, `y`; 0 for a whole page). Freed by hdmv_picture_free.
 typedef struct HdmvPicture {
@@ -81,6 +87,24 @@ char *hdmv_disc_menus_json(const struct HdmvDisc *disc);
 // `disc` must come from hdmv_disc_open; `clip` must be a NUL-terminated string.
 struct HdmvMenu *hdmv_disc_menu(const struct HdmvDisc *disc, const char *clip, uint16_t pid);
 
+// A stretch of a clip's file, decrypted as the disc was opened to: from `offset` rounded down to its
+// aligned unit (6144 bytes), `length` rounded up to whole units or to the clip's end. For decoding a frame
+// of what plays under a menu with a decoder of your own (this library decodes no video). Free with
+// hdmv_bytes_free; NULL on failure (an empty buffer past the clip's end is not a failure).
+//
+// # Safety
+// `disc` must come from hdmv_disc_open; `clip` must be a NUL-terminated string.
+struct HdmvBytes *hdmv_disc_read_clip(const struct HdmvDisc *disc,
+                                      const char *clip,
+                                      uint64_t offset,
+                                      size_t length);
+
+// Free bytes this library returned (NULL is fine).
+//
+// # Safety
+// `bytes` must come from this library and not be used after.
+void hdmv_bytes_free(struct HdmvBytes *bytes);
+
 // Every menu stream the disc can get to, and the way there, as JSON: `[{"stream": {"clip", "pid",
 // "lang", "playlists"}, "path": ["first play", "plays 00060", "00072 page 2 button 35", ...],
 // "reached"}]`. Menus are read on the way. Worked out once per disc, then kept. Free with
@@ -139,6 +163,20 @@ struct HdmvPicture *hdmv_menu_draw(const struct HdmvMenu *menu,
                                    uint8_t page,
                                    int selected,
                                    uint32_t background);
+
+// A page drawn over a picture of the menu's own size (`width` by `height`, its composition's: RGBA, row by
+// row, straight alpha), such as a frame of the video that plays under it: the menu as a player shows it.
+// `selected` as hdmv_menu_draw's. A picture of another size is a failure: scale it first. Free with
+// hdmv_picture_free; NULL on failure.
+//
+// # Safety
+// `menu` must come from hdmv_disc_menu; `rgba` must point to `width * height * 4` bytes.
+struct HdmvPicture *hdmv_menu_draw_over(const struct HdmvMenu *menu,
+                                        uint8_t page,
+                                        int selected,
+                                        const uint8_t *rgba,
+                                        size_t width,
+                                        size_t height);
 
 // A button's own picture in a state, with its place on the page. NULL if it has none (or on failure:
 // hdmv_last_error says which). Free with hdmv_picture_free.

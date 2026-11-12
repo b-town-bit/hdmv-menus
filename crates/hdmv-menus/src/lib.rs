@@ -190,6 +190,13 @@ impl Disc {
         Ok(menu)
     }
 
+    /// A stretch of a clip's file, decrypted as the disc was opened to (stream::read_clip): from `offset`
+    /// rounded down to its aligned unit, `length` bytes rounded up to whole units. What plays under a menu,
+    /// for the caller to decode a frame of with a decoder of their own, the disc unlocked once, not again.
+    pub fn read_clip(&self, clip: &str, offset: u64, length: usize) -> Result<Vec<u8>> {
+        stream::read_clip(&stream::clip_path(&self.root, clip), offset, length, self.decrypt.as_deref())
+    }
+
     /// An interpreter for the disc's programs, nothing run yet.
     pub fn machine(&self) -> vm::Machine {
         vm::Machine::new(Arc::clone(&self.programs))

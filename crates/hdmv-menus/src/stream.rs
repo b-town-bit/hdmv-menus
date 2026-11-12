@@ -129,6 +129,39 @@ fn split(pes: &[u8], out: &mut Vec<Segment>) {
     }
 }
 
+/// A stretch of a clip's file, decrypted where it's encrypted: from `offset` rounded down to its aligned
+/// unit (the bytes returned start there), `length` bytes rounded up to whole units, or to the clip's end.
+/// For the caller to decode what plays under a menu (a frame of its video, with a decoder of their own):
+/// this crate decodes no video.
+pub fn read_clip(path: &Path, offset: u64, length: usize, decrypt: Option<&dyn Decrypt>) -> Result<Vec<u8>> {
+    use std::io::{Seek, SeekFrom};
+    let mut file = File::open(path)?;
+    let start = offset - offset % UNIT as u64;
+    file.seek(SeekFrom::Start(start))?;
+    let units = length.div_ceil(UNIT).max(1);
+    let mut out = Vec::with_capacity(units * UNIT);
+    let mut unit = vec![0u8; UNIT];
+    for _ in 0..units {
+        let n = read_full(&mut file, &mut unit)?;
+        if n == 0 {
+            break;
+        }
+        let got = &mut unit[..n];
+        if encrypted(got) {
+            match decrypt {
+                Some(d) if n == UNIT => d.decrypt_unit(got)?,
+                Some(_) => return Err(Error::Decrypt("an encrypted unit is cut short".into())),
+                None => return Err(Error::Decrypt("the clip is encrypted and no way to decrypt it was given".into())),
+            }
+        }
+        out.extend_from_slice(got);
+        if n < UNIT {
+            break;
+        }
+    }
+    Ok(out)
+}
+
 /// A clip's file under the disc.
 pub fn clip_path(root: &Path, clip: &str) -> PathBuf {
     let name = format!("{clip}.m2ts");
@@ -148,6 +181,48 @@ mod tests {
         unit[0] = 0xC0;
         std::fs::write(&path, &unit).unwrap();
         assert!(matches!(segments(&path, 0x1400, None), Err(Error::Decrypt(_))));
+        assert!(matches!(read_clip(&path, 0, UNIT, None), Err(Error::Decrypt(_))));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A stand-in decryptor: its copy bits cleared and every byte after the first 16 flipped.
+    struct Flip;
+
+    impl Decrypt for Flip {
+        fn decrypt_unit(&self, unit: &mut [u8]) -> Result<()> {
+            unit[0] &= 0x3F;
+            for b in &mut unit[16..] {
+                *b ^= 0xFF;
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_stretch_of_a_clip_is_read_unit_by_unit_and_decrypted_where_its_encrypted() {
+        let dir = std::env::temp_dir().join(format!("hdmv-menus-read-clip-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("00002.m2ts");
+        // three units: plain (0x11s), encrypted (0x22s, flipped), plain; then half a unit, plain (no copy bits: 0x04s)
+        let mut bytes = vec![0x11u8; UNIT];
+        let mut locked = vec![0x22u8 ^ 0xFF; UNIT];
+        locked[0] = 0xC0;
+        locked[1..16].fill(0x22);
+        bytes.extend_from_slice(&locked);
+        bytes.extend(vec![0x33u8; UNIT]);
+        bytes.extend(vec![0x04u8; UNIT / 2]);
+        std::fs::write(&path, &bytes).unwrap();
+        // the second and third units, asked for from inside the second: from its start, decrypted
+        let got = read_clip(&path, UNIT as u64 + 100, UNIT + 1, Some(&Flip)).unwrap();
+        assert_eq!(got.len(), 2 * UNIT);
+        assert_eq!(got[0], 0x00);
+        assert!(got[1..UNIT].iter().all(|&b| b == 0x22));
+        assert!(got[UNIT..].iter().all(|&b| b == 0x33));
+        // to the clip's end: its last half unit as it is
+        let tail = read_clip(&path, 3 * UNIT as u64, 10 * UNIT, Some(&Flip)).unwrap();
+        assert_eq!(tail, vec![0x04u8; UNIT / 2]);
+        // past the end: nothing
+        assert!(read_clip(&path, 9 * UNIT as u64, UNIT, Some(&Flip)).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }
 }

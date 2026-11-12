@@ -390,7 +390,24 @@ impl Menu {
     /// A page as shown: its opening effect's last step, then each group's button; `selected` (a button's
     /// id) in its selected state, the rest normal. None: the page's own default selection.
     pub fn draw(&self, page: &Page, selected: Option<u16>, background: Rgba) -> Image {
-        let mut canvas = Image::new(self.composition.width as usize, self.composition.height as usize, background);
+        let canvas = Image::new(self.composition.width as usize, self.composition.height as usize, background);
+        self.draw_onto(page, selected, canvas)
+    }
+
+    /// A page drawn over a picture of the menu's own size (a frame of the video that plays under it, decoded by
+    /// the caller): the menu as a player shows it. A picture of another size is an error: scale it first.
+    pub fn draw_over(&self, page: &Page, selected: Option<u16>, background: Image) -> crate::Result<Image> {
+        let (w, h) = (self.composition.width as usize, self.composition.height as usize);
+        if (background.width, background.height) != (w, h) || background.rgba.len() != w * h * 4 {
+            return Err(crate::Error::Format(format!(
+                "a background of {}x{} for a menu of {w}x{h}",
+                background.width, background.height
+            )));
+        }
+        Ok(self.draw_onto(page, selected, background))
+    }
+
+    fn draw_onto(&self, page: &Page, selected: Option<u16>, mut canvas: Image) -> Image {
         let selected = selected.or(if page.default_selected != 0xFFFF { Some(page.default_selected) } else { None });
         if let Some(last) = page.in_effects.last() {
             for o in last {
@@ -505,6 +522,23 @@ mod tests {
         let img = menu.draw(&menu.composition.pages[0], None, [0, 0, 0, 0]);
         let at = |x: usize, y: usize| img.rgba[(y * img.width + x) * 4 + 3];
         assert_eq!((at(10, 20), at(12, 20)), (255, 0));
+    }
+
+    #[test]
+    fn a_page_drawn_over_its_video_keeps_the_video_where_nothing_covers_it() {
+        let pal = vec![0, 0, 1, 235, 128, 128, 255];
+        let obj = vec![0, 1, 0, 0xC0, 0, 0, 4, 0, 2, 0, 1, 1, 1, 0, 0];
+        let seg = composition_segment(&[(5, 10, 20, vec![])]);
+        let menu = Menu::from_segments(&[(0x14, pal), (0x15, obj), (0x18, seg), (0x80, vec![])]).unwrap();
+        let page = &menu.composition.pages[0];
+        let video = Image::new(1920, 1080, [200, 30, 30, 255]);
+        let img = menu.draw_over(page, None, video).unwrap();
+        let px = |x: usize, y: usize| img.rgba[(y * img.width + x) * 4..][..4].to_vec();
+        // the button where it's drawn (as over nothing), the video around it
+        assert_eq!(px(10, 20), menu.draw(page, None, [0, 0, 0, 0]).rgba[(20 * 1920 + 10) * 4..][..4].to_vec());
+        assert_eq!(px(12, 20), vec![200, 30, 30, 255]);
+        // a picture of another size: an error, not a stretched one
+        assert!(menu.draw_over(page, None, Image::new(1280, 720, [0, 0, 0, 255])).is_err());
     }
 
     #[test]

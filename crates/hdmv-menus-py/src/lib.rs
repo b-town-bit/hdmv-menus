@@ -102,6 +102,17 @@ impl Disc {
         Ok(Menu { inner: got.map_err(error)?, clip: clip.to_string(), pid })
     }
 
+    /// A stretch of a clip's file, decrypted as the disc was opened to: bytes from `offset` rounded down to its
+    /// aligned unit (6144 bytes), `length` rounded up to whole units or to the clip's end (read off the drive:
+    /// the lock released).
+    #[pyo3(signature = (clip, offset = 0, length = 16 << 20))]
+    fn read_clip<'py>(&self, py: Python<'py>, clip: &str, offset: u64, length: usize) -> PyResult<Bound<'py, PyBytes>> {
+        let disc = OnThisThread(&self.inner);
+        let name = clip.to_string();
+        let got = py.detach(move || OnThisThread(disc.get().read_clip(&name, offset, length))).into();
+        Ok(PyBytes::new(py, &got.map_err(error)?))
+    }
+
     /// What every button of a menu does, as JSON ([{"page", "button", "outcome"}]), each pressed while the
     /// menu shows.
     fn links_json(&self, py: Python<'_>, menu: &Menu) -> PyResult<String> {
@@ -187,6 +198,24 @@ impl Menu {
         let p = self.page(page)?;
         let inner = &self.inner;
         let img = py.detach(|| inner.draw(p, selected, [r, g, b, a]));
+        Ok(picture(py, &img))
+    }
+
+    /// A page drawn over a picture of the menu's size (RGBA bytes, row by row): (width, height, RGBA bytes).
+    #[pyo3(signature = (page, selected, width, height, rgba))]
+    fn draw_over<'py>(
+        &self,
+        py: Python<'py>,
+        page: u8,
+        selected: Option<u16>,
+        width: usize,
+        height: usize,
+        rgba: Vec<u8>,
+    ) -> PyResult<Picture<'py>> {
+        let p = self.page(page)?;
+        let inner = &self.inner;
+        let back = hdmv_menus::ig::Image { width, height, rgba };
+        let img = py.detach(|| inner.draw_over(p, selected, back)).map_err(error)?;
         Ok(picture(py, &img))
     }
 

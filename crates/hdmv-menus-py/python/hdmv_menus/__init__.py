@@ -72,8 +72,24 @@ class Menu:
         return json.loads(self._native.palettes_json())
 
     def draw(self, page, selected=None, background=(0, 0, 0, 0)):
-        """A page (its dict or id) as shown, selected: a button's id in its selected state."""
-        w, h, rgba = self._native.draw(_page_id(page), selected, tuple(background))
+        """A page (its dict or id) as shown, selected: a button's id in its selected state. background: a
+        colour (r, g, b, a: see-through by default), or a picture to draw the page over (a Picture, or a
+        Pillow image: one of another size is scaled to the menu's, which needs Pillow), such as a frame of the
+        video that plays under the menu (decoded by the caller, from Disc.read_clip): the menu as shown."""
+        if isinstance(background, (tuple, list)):
+            w, h, rgba = self._native.draw(_page_id(page), selected, tuple(background))
+            return Picture(w, h, rgba)
+        size = (self.composition["width"], self.composition["height"])
+        if isinstance(background, Picture) and (background.width, background.height) == size:
+            rgba = background.rgba
+        else:
+            from PIL import Image
+            img = background.to_pil() if isinstance(background, Picture) else background
+            img = img.convert("RGBA")
+            if img.size != size:
+                img = img.resize(size, Image.LANCZOS)
+            rgba = img.tobytes()
+        w, h, rgba = self._native.draw_over(_page_id(page), selected, size[0], size[1], rgba)
         return Picture(w, h, rgba)
 
     def button_image(self, page, button, state="normal"):
@@ -111,6 +127,13 @@ class Disc:
     def menu(self, clip, pid=0x1400):
         """One menu stream, decoded."""
         return Menu(self._native.menu(clip, pid))
+
+    def read_clip(self, clip, offset=0, length=16 << 20):
+        """A stretch of a clip's file (its .m2ts), decrypted as the disc was opened to (aacs): bytes from offset
+        rounded down to its aligned unit (6144 bytes), length rounded up to whole units or to the clip's end.
+        For decoding a frame of what plays under a menu with a decoder of your own (this package decodes no
+        video), the disc unlocked once, not again."""
+        return self._native.read_clip(clip, offset, length)
 
     def links(self, menu):
         """What every button of a menu does, each pressed while the menu shows (a pop-up: its film

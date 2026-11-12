@@ -65,6 +65,19 @@ for t in plan["titles"]:
 
 A decoded menu is kept by the disc, so asking for it again (or crawling again) costs nothing.
 
+### A menu as a player shows it
+
+A menu's pictures are its graphics alone: the video that plays under it (its own clip's, or what plays
+while it shows) isn't part of the menu, and this library decodes no video. `read_clip` gives you that
+clip's bytes, decrypted as the disc was opened to (no second unlocking), for a decoder of your own to take
+a frame from; `draw` lays the page over it:
+
+```python
+data = disc.read_clip("00098", length=16 << 20)     # the first 16 MB of BDMV/STREAM/00098.m2ts
+frame = my_decoder.first_frame(data)                # (yours: OpenCV, PyAV, FFmpeg...) a Pillow image
+menu.draw(page, background=frame).to_pil()          # scaled to the menu's size if it isn't
+```
+
 One wheel per platform works on Python 3.9 and every later version.
 
 ## C (and anything that can call C: C++, C#, Go, Swift...)
