@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.2 (2026-11-11)
+
+- `read_clip` (`Disc::read_clip`, `hdmv_disc_read_clip`): a stretch of a clip's file, decrypted as the disc
+  was opened to, in whole aligned units. For decoding a frame of what plays under a menu with a decoder of
+  the caller's own, without unlocking the disc again (opening it through another program each time took 13
+  seconds a frame on a protected disc). The library still decodes no video.
+- A page drawn over a picture: `Menu::draw_over`, `hdmv_menu_draw_over`, and in Python `draw`'s
+  `background` taking a picture (a `Picture` or a Pillow image, scaled to the menu's size) as well as a
+  colour. The menu as a player shows it, over a frame of its video.
+
 ## 0.1.1 (2026-11-09)
 
 - A button's `then` (what plays after it) is followed only for a playlist it plays from its start, as a Play

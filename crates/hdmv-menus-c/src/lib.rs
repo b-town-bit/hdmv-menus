@@ -33,6 +33,13 @@ pub struct HdmvPicture {
     pub y: u16,
 }
 
+/// Bytes: `length` of them at `data`. Freed by hdmv_bytes_free.
+#[repr(C)]
+pub struct HdmvBytes {
+    pub data: *mut u8,
+    pub length: usize,
+}
+
 /// A button's state, for its picture.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -183,6 +190,45 @@ pub unsafe extern "C" fn hdmv_disc_menu(disc: *const HdmvDisc, clip: *const c_ch
     })
 }
 
+/// A stretch of a clip's file, decrypted as the disc was opened to: from `offset` rounded down to its
+/// aligned unit (6144 bytes), `length` rounded up to whole units or to the clip's end. For decoding a frame
+/// of what plays under a menu with a decoder of your own (this library decodes no video). Free with
+/// hdmv_bytes_free; NULL on failure (an empty buffer past the clip's end is not a failure).
+///
+/// # Safety
+/// `disc` must come from hdmv_disc_open; `clip` must be a NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn hdmv_disc_read_clip(
+    disc: *const HdmvDisc,
+    clip: *const c_char,
+    offset: u64,
+    length: usize,
+) -> *mut HdmvBytes {
+    guard(ptr::null_mut(), || {
+        let clip = text(clip, "clip")?;
+        let got = disc_ref(disc)?.read_clip(clip, offset, length).map_err(|e| e.to_string())?;
+        let mut data = got.into_boxed_slice();
+        let (p, len) = (data.as_mut_ptr(), data.len());
+        std::mem::forget(data);
+        Ok(Box::into_raw(Box::new(HdmvBytes { data: p, length: len })))
+    })
+}
+
+/// Free bytes this library returned (NULL is fine).
+///
+/// # Safety
+/// `bytes` must come from this library and not be used after.
+#[no_mangle]
+pub unsafe extern "C" fn hdmv_bytes_free(bytes: *mut HdmvBytes) {
+    if bytes.is_null() {
+        return;
+    }
+    let b = Box::from_raw(bytes);
+    if !b.data.is_null() {
+        drop(Box::from_raw(ptr::slice_from_raw_parts_mut(b.data, b.length)));
+    }
+}
+
 /// Every menu stream the disc can get to, and the way there, as JSON: `[{"stream": {"clip", "pid",
 /// "lang", "playlists"}, "path": ["first play", "plays 00060", "00072 page 2 button 35", ...],
 /// "reached"}]`. Menus are read on the way. Worked out once per disc, then kept. Free with
@@ -272,6 +318,35 @@ pub unsafe extern "C" fn hdmv_menu_draw(menu: *const HdmvMenu, page: u8, selecte
     })
 }
 
+/// A page drawn over a picture of the menu's own size (`width` by `height`, its composition's: RGBA, row by
+/// row, straight alpha), such as a frame of the video that plays under it: the menu as a player shows it.
+/// `selected` as hdmv_menu_draw's. A picture of another size is a failure: scale it first. Free with
+/// hdmv_picture_free; NULL on failure.
+///
+/// # Safety
+/// `menu` must come from hdmv_disc_menu; `rgba` must point to `width * height * 4` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn hdmv_menu_draw_over(
+    menu: *const HdmvMenu,
+    page: u8,
+    selected: c_int,
+    rgba: *const u8,
+    width: usize,
+    height: usize,
+) -> *mut HdmvPicture {
+    guard(ptr::null_mut(), || {
+        let m = menu_ref(menu)?;
+        let p = m.page(page).ok_or_else(|| format!("no page {page}"))?;
+        if rgba.is_null() {
+            return Err("rgba is NULL".into());
+        }
+        let n = width.checked_mul(height).and_then(|n| n.checked_mul(4)).ok_or("a picture too big")?;
+        let back = hdmv_menus::ig::Image { width, height, rgba: std::slice::from_raw_parts(rgba, n).to_vec() };
+        let img = m.draw_over(p, u16::try_from(selected).ok(), back).map_err(|e| e.to_string())?;
+        Ok(picture(img, 0, 0))
+    })
+}
+
 /// A button's own picture in a state, with its place on the page. NULL if it has none (or on failure:
 /// hdmv_last_error says which). Free with hdmv_picture_free.
 ///
@@ -348,6 +423,17 @@ mod tests {
             let clip = CString::new("00099").unwrap();
             assert!(hdmv_disc_menu(disc, clip.as_ptr(), 0x1400).is_null());
             assert!(!last_error().is_empty());
+            assert!(hdmv_disc_read_clip(disc, clip.as_ptr(), 0, 6144).is_null());
+            assert!(!last_error().is_empty());
+            // a clip that's there: its bytes, from the unit the offset falls in, in whole units
+            std::fs::create_dir_all(dir.join("BDMV").join("STREAM")).unwrap();
+            let bytes: Vec<u8> = (0..2 * 6144).map(|i| (i % 7) as u8).collect();
+            std::fs::write(dir.join("BDMV").join("STREAM").join("00001.m2ts"), &bytes).unwrap();
+            let one = CString::new("00001").unwrap();
+            let got = hdmv_disc_read_clip(disc, one.as_ptr(), 6200, 10);
+            assert!(!got.is_null(), "{}", last_error());
+            assert_eq!(std::slice::from_raw_parts((*got).data, (*got).length), &bytes[6144..]);
+            hdmv_bytes_free(got);
             hdmv_disc_free(disc);
         }
         let _ = std::fs::remove_dir_all(dir);
@@ -360,10 +446,13 @@ mod tests {
             assert_eq!(last_error(), "root is NULL");
             assert!(hdmv_menu_composition_json(ptr::null()).is_null());
             assert!(hdmv_menu_draw(ptr::null(), 0, -1, 0).is_null());
+            assert!(hdmv_menu_draw_over(ptr::null(), 0, -1, ptr::null(), 0, 0).is_null());
+            assert!(hdmv_disc_read_clip(ptr::null(), ptr::null(), 0, 0).is_null());
             hdmv_disc_free(ptr::null_mut());
             hdmv_menu_free(ptr::null_mut());
             hdmv_picture_free(ptr::null_mut());
             hdmv_string_free(ptr::null_mut());
+            hdmv_bytes_free(ptr::null_mut());
         }
         assert_eq!(unsafe { CStr::from_ptr(hdmv_version()) }.to_str().unwrap(), env!("CARGO_PKG_VERSION"));
     }

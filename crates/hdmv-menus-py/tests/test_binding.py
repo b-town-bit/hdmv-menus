@@ -99,3 +99,29 @@ def test_a_crawl_plan_of_a_disc_with_no_playlists_is_empty(disc):
         assert (plan["scope"], plan["menus"], plan["titles"]) == (scope, [], [])
     with pytest.raises(ValueError):
         disc.crawl("some")
+
+
+def test_a_stretch_of_a_clip_read_whole_units_from_the_unit_its_offset_is_in(disc, tmp_path):
+    """The clip's bytes as they are (an unencrypted one), from the start of the unit the offset falls in, in
+    whole units; to its end, no further; a clip that isn't there: an error."""
+    whole = (tmp_path / "BDMV" / "STREAM" / "00072.m2ts").read_bytes()
+    assert disc.read_clip("00072") == whole
+    assert disc.read_clip("00072", offset=100, length=10) == whole[:6144]
+    assert disc.read_clip("00072", offset=len(whole) + 6144) == b""
+    with pytest.raises(OSError):
+        disc.read_clip("00099")
+
+
+def test_a_page_drawn_over_a_picture_of_its_video(disc):
+    """The page over a picture: the button where it's drawn, the picture around it; a picture of the menu's
+    size as it is, another size (a frame of 1280x720 video) scaled to it."""
+    PIL = pytest.importorskip("PIL")
+    from PIL import Image
+    menu = disc.menu("00072")
+    alone = menu.draw(menu.pages[0])
+    for video in (Image.new("RGB", (1920, 1080), (200, 30, 30)), Image.new("RGB", (1280, 720), (200, 30, 30)),
+                  hdmv_menus.Picture(1920, 1080, bytes([200, 30, 30, 255]) * (1920 * 1080))):
+        shown = menu.draw(menu.pages[0], background=video)
+        px = lambda p, x, y: tuple(p.rgba[(y * 1920 + x) * 4:][:4])
+        assert (shown.width, shown.height) == (1920, 1080)
+        assert px(shown, 10, 20) == px(alone, 10, 20) and px(shown, 12, 20) == (200, 30, 30, 255)
