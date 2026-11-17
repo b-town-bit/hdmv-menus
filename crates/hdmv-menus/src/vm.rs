@@ -410,11 +410,22 @@ impl Machine {
     /// Order of the Phoenix's chapter thumbnails each keep their chapter and select a hidden one that plays
     /// the film from it), as far as AUTO_LIMIT.
     pub fn press_through(&mut self, composition: &crate::ig::Composition, page: u8, button: &Button) -> Outcome {
+        self.press_landing(composition, page, button).0
+    }
+
+    /// press_through, and the page the menu's on after it (the page pressed on, unless it turned). A turn to
+    /// another page stays in the outcome when the auto-action buttons there only select (Chuck's bar: Special
+    /// Features turns to page 3 on its auto-action button 0, which selects button 6 -- page 3, button 6, not "this
+    /// page, button 6").
+    pub fn press_landing(&mut self, composition: &crate::ig::Composition, page: u8, button: &Button) -> (Outcome, u8) {
         let find = |page: u8, id: u32| {
             composition.pages.iter().find(|p| p.id == page).and_then(|p| p.buttons().find(|b| b.id as u32 == id))
         };
         let mut outcome = self.press(page, button);
         let mut on = page;
+        if let Outcome::Page { page: Some(to), button: None } = outcome {
+            on = to as u8;
+        }
         for _ in 0..AUTO_LIMIT {
             let Outcome::Page { page: to, button: Some(next) } = outcome else { break };
             on = to.map_or(on, |p| p as u8);
@@ -423,7 +434,12 @@ impl Machine {
                 _ => break,
             }
         }
-        outcome
+        if let Outcome::Page { page: None, button } = outcome {
+            if on != page {
+                outcome = Outcome::Page { page: Some(on as u32), button };
+            }
+        }
+        (outcome, on)
     }
 
     /// Press a button on a page: its commands run (over whatever is playing), and wherever they go.
@@ -441,13 +457,44 @@ impl Machine {
 /// Buttons pressed in a row by auto-action before it's given up as a loop.
 pub const AUTO_LIMIT: usize = 16;
 
-/// What every button of a menu does, each pressed from the same state (`start`: as the menu shows):
-/// no press changes another's. (Auto-action buttons followed: Machine::press_through.)
+/// What every button of a menu does, each pressed from the state the player is in on its page: as the menu
+/// shows (`start`) for a page nothing turns to, else as the first button that turns to it leaves it, the
+/// auto-action buttons on the way pressed (Machine::press_landing). No press changes another's. Chuck's special
+/// features: the bar's auto-action button turns to the page on its auto-action button, which keeps a number in a
+/// register and selects "Declassified Scenes"; that one calls the title the register and its own id make --
+/// pressed as the menu first showed, the register empty, it called the disc's intro. A page no button is seen
+/// turning to (the page picked from a setting only a player knows: Chuck's pop-up, "Play" or "Resume Episode"
+/// by what's playing) opens as its own auto-action button leaves it, one that stays on the page and only
+/// selects there -- the same register kept, the same button selected.
 pub fn links(start: &Machine, composition: &crate::ig::Composition) -> Vec<ButtonLink> {
-    let mut out = Vec::new();
+    let mut arrival: std::collections::HashMap<u8, Machine> = std::collections::HashMap::new();
     for page in &composition.pages {
         for button in page.buttons() {
             let mut machine = start.clone();
+            let (outcome, on) = machine.press_landing(composition, page.id, button);
+            if matches!(outcome, Outcome::Page { .. }) && on != page.id {
+                arrival.entry(on).or_insert(machine);
+            }
+        }
+    }
+    for page in &composition.pages {
+        if arrival.contains_key(&page.id) {
+            continue;
+        }
+        for button in page.buttons().filter(|b| b.auto_action) {
+            let mut machine = start.clone();
+            let (outcome, on) = machine.press_landing(composition, page.id, button);
+            if matches!(outcome, Outcome::Page { page: None, button: Some(_) }) && on == page.id {
+                arrival.insert(page.id, machine);
+                break;
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for page in &composition.pages {
+        let base = arrival.get(&page.id).unwrap_or(start);
+        for button in page.buttons() {
+            let mut machine = base.clone();
             let outcome = machine.press_through(composition, page.id, button);
             // (what plays after it: only for a playlist played from its start, as a Play All plays it; a jump
             // into one at a mark or a play item, a chapter's, goes on with the film's own program, and following
@@ -610,6 +657,70 @@ mod tests {
         let got = links(&m, &c);
         assert_eq!(got[0].outcome, Outcome::Play { playlist: 60, item: None, mark: Some(7), title: None, object: None });
         assert!(got[0].then.is_empty()); // (a chapter's jump into the film: nothing followed after it)
+    }
+
+    #[test]
+    fn a_pages_buttons_are_pressed_as_the_player_is_on_arriving_there() {
+        // Chuck's special features: the bar's auto-action button (6) turns to page 2 on its auto-action button
+        // (9), which keeps 11 in r3604 and selects button 4; button 4 calls the title r3604 and its own id make
+        // (15: its scenes), not the one an empty register makes (4: the disc's intro)
+        use crate::ig::{Composition, Group, Page};
+        let objects = vec![object(vec![play_value(3)]), object(vec![play_value(26)])];
+        let mut titles = vec![Entry::None; 15];
+        titles[3] = Entry::Hdmv { object: 0 };
+        titles[14] = Entry::Hdmv { object: 1 };
+        let index = Index { first_play: Entry::None, top_menu: Entry::None, titles };
+        let m = Machine::new(Arc::new(Programs { index: Some(index), objects }));
+        let page_of = |id: u8, groups: Vec<Group>| Page {
+            id,
+            version: 0,
+            in_effects: vec![],
+            out_effects: vec![],
+            animation_rate: 0,
+            default_selected: 0xFFFF,
+            default_activated: 0xFFFF,
+            palette: 0,
+            groups,
+        };
+        let turn = cmd([0x51, 0, 0, 3], 0x8000_0FEC, 0x8000_0FED); // SetButtonPage r4076, r4077
+        let mut bar = button(6, vec![set(4076, 9), set(4077, 2), turn]);
+        bar.auto_action = true;
+        let mut opens = button(9, vec![set(3604, 11), set(4076, 4), cmd([0x51, 0, 0, 3], 0x8000_0FEC, 0)]);
+        opens.auto_action = true;
+        let scenes = button(
+            4,
+            vec![
+                cmd([0x50, 0, 0, 1], 4075, 3604),        // r4075 = r3604
+                cmd([0x50, 0, 0, 1], 4077, 0x8000_000A), // r4077 = PSR10, the button's own id
+                cmd([0x50, 0, 0, 3], 4075, 4077),        // r4075 += r4077
+                call_title(4075),
+            ],
+        );
+        let pages = vec![
+            page_of(0, vec![Group { default: 6, buttons: vec![bar] }]),
+            page_of(2, vec![Group { default: 9, buttons: vec![opens] }, Group { default: 4, buttons: vec![scenes] }]),
+        ];
+        let c = Composition { width: 1920, height: 1080, stream_model: "multiplexed", ui_model: "pop-up", pages };
+        let got = links(&m, &c);
+        // (the bar's button turns to page 2: said so, though the auto-action button there only selects button 4)
+        let to = got.iter().find(|l| l.page == 0 && l.button == 6).unwrap();
+        assert_eq!(to.outcome, Outcome::Page { page: Some(2), button: Some(4) });
+        let scenes = got.iter().find(|l| l.page == 2 && l.button == 4).unwrap();
+        assert_eq!(scenes.outcome, Outcome::Play { playlist: 26, item: None, mark: None, title: Some(15), object: Some(1) });
+        // (pressed as the menu first shows, the register empty: the intro)
+        let mut lone = m.clone();
+        assert!(matches!(lone.press(2, &c.pages[1].groups[1].buttons[0]), Outcome::Play { playlist: 3, .. }));
+        // a page no button is seen turning to (Chuck's pop-up: page 1 or 2 by what's playing) opens as its own
+        // auto-action button, staying on the page, leaves it: r3604 kept, button 4 selected
+        let mut keeps = button(1, vec![set(3604, 11), set(4076, 4), cmd([0x51, 0, 0, 3], 0x8000_0FEC, 0)]);
+        keeps.auto_action = true;
+        let scenes = c.pages[1].groups[1].buttons[0].clone();
+        let pages =
+            vec![page_of(1, vec![Group { default: 1, buttons: vec![keeps] }, Group { default: 4, buttons: vec![scenes] }])];
+        let popup = Composition { width: 1920, height: 1080, stream_model: "multiplexed", ui_model: "pop-up", pages };
+        let got = links(&m, &popup);
+        let scenes = got.iter().find(|l| l.page == 1 && l.button == 4).unwrap();
+        assert!(matches!(scenes.outcome, Outcome::Play { playlist: 26, title: Some(15), .. }));
     }
 
     #[test]
