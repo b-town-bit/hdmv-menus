@@ -416,7 +416,9 @@ impl Machine {
     /// press_through, and the page the menu's on after it (the page pressed on, unless it turned). A turn to
     /// another page stays in the outcome when the auto-action buttons there only select (Chuck's bar: Special
     /// Features turns to page 3 on its auto-action button 0, which selects button 6 -- page 3, button 6, not "this
-    /// page, button 6").
+    /// page, button 6"), and when one of them runs into STEP_LIMIT: the turn happened, the loop is in what that
+    /// button sets up there (Chuck's Languages page: its auto-action button loops for want of the audio choice a
+    /// player keeps in a register as an episode plays).
     pub fn press_landing(&mut self, composition: &crate::ig::Composition, page: u8, button: &Button) -> (Outcome, u8) {
         let find = |page: u8, id: u32| {
             composition.pages.iter().find(|p| p.id == page).and_then(|p| p.buttons().find(|b| b.id as u32 == id))
@@ -430,7 +432,14 @@ impl Machine {
             let Outcome::Page { page: to, button: Some(next) } = outcome else { break };
             on = to.map_or(on, |p| p as u8);
             match find(on, next) {
-                Some(b) if b.auto_action => outcome = self.press(on, b),
+                Some(b) if b.auto_action => {
+                    let turned = outcome.clone();
+                    outcome = self.press(on, b);
+                    if outcome == Outcome::StepLimit {
+                        outcome = turned;
+                        break;
+                    }
+                }
                 _ => break,
             }
         }
@@ -721,6 +730,41 @@ mod tests {
         let got = links(&m, &popup);
         let scenes = got.iter().find(|l| l.page == 1 && l.button == 4).unwrap();
         assert!(matches!(scenes.outcome, Outcome::Play { playlist: 26, title: Some(15), .. }));
+    }
+
+    #[test]
+    fn a_turn_to_a_page_stays_though_its_auto_action_button_loops() {
+        // Chuck's pop-up bar: Languages turns to page 2 on its auto-action button 0, whose language set-up loops
+        // for want of a register a player sets as an episode plays -- page 2, button 0, not a step limit
+        use crate::ig::{Composition, Group, Page};
+        let index = Index { first_play: Entry::None, top_menu: Entry::None, titles: vec![] };
+        let m = Machine::new(Arc::new(Programs { index: Some(index), objects: vec![] }));
+        let page_of = |id: u8, groups: Vec<Group>| Page {
+            id,
+            version: 0,
+            in_effects: vec![],
+            out_effects: vec![],
+            animation_rate: 0,
+            default_selected: 0xFFFF,
+            default_activated: 0xFFFF,
+            palette: 0,
+            groups,
+        };
+        let turn = cmd([0x51, 0, 0, 3], 0x8000_0FEC, 0x8000_0FED); // SetButtonPage r4076, r4077
+        let languages = button(2, vec![set(4076, 0), set(4077, 2), turn]);
+        let mut sets_up = button(0, vec![cmd([0x20, 0x81, 0, 0], 0, 0)]); // GoTo 0: a loop
+        sets_up.auto_action = true;
+        let pages = vec![
+            page_of(1, vec![Group { default: 2, buttons: vec![languages] }]),
+            page_of(2, vec![Group { default: 0, buttons: vec![sets_up] }]),
+        ];
+        let c = Composition { width: 1920, height: 1080, stream_model: "multiplexed", ui_model: "pop-up", pages };
+        let mut machine = m.clone();
+        let (outcome, on) = machine.press_landing(&c, 1, &c.pages[0].groups[0].buttons[0]);
+        assert_eq!((outcome, on), (Outcome::Page { page: Some(2), button: Some(0) }, 2));
+        let got = links(&m, &c);
+        let to = got.iter().find(|l| l.page == 1 && l.button == 2).unwrap();
+        assert_eq!(to.outcome, Outcome::Page { page: Some(2), button: Some(0) });
     }
 
     #[test]
