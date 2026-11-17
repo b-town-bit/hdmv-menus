@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.3 (2026-11-17)
+
+- `links` presses each page's buttons from the state the player is in on arriving there: as the first button
+  turning to it leaves the player, the auto-action buttons on the way pressed. A button reading a register an
+  earlier press sets now calls the title it should (Chuck's special features: "Declassified Scenes" called the
+  disc's intro, pressed as the menu first showed). A page no button is seen turning to opens as its own
+  auto-action button leaves it, when that stays on the page and only selects.
+- A turn to another page stays in the outcome when the auto-action buttons there only select (`Page { page:
+  Some(..) }`): Chuck's pop-up bar's Special Features said "this page, button 6", not page 3, so the way to its
+  pages couldn't be worked out.
+
 ## 0.1.2 (2026-11-11)
 
 - `read_clip` (`Disc::read_clip`, `hdmv_disc_read_clip`): a stretch of a clip's file, decrypted as the disc
