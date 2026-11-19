@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- A menu carried in a film's own clip (512 MB or more) is looked for at its chapters before the film is read from
+  its start: a film sends its menu again where a viewer may jump in. The chapter marks of every playlist naming
+  the stream, in time order; each one's entry point from the clip's entry-point map; from there, up to 16 MB read
+  for a whole display set that starts the menu or repeats it; 8 chapters at most, then the read from the start as
+  before. Order of the Phoenix's in-film menu, first sent 4 minutes into the film: a gigabyte read from the start,
+  122 s cold, now 25 MB, 4.7 s; its menus worked out cold in 22 s, not 269. `navigation::playlist_marks`,
+  `navigation::entry_points` and `stream::menu_segments_at` do the reading.
+
 ## 0.1.3 (2026-11-17)
 
 - `links` presses each page's buttons from the state the player is in on arriving there: as the first button
