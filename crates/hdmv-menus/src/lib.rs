@@ -47,6 +47,13 @@ pub use error::{Error, Result};
 pub use ig::Menu;
 pub use navigation::{Index, MenuStream, MovieObject};
 
+/// A clip this size or larger may carry a film's pop-up menu: its chapters tried first (Disc::menu_at_chapters).
+const JUMP_FROM: u64 = 512 << 20;
+/// Chapters tried at most, for a menu in a film's clip, before it's read from the clip's start.
+const JUMP_TRIES: usize = 8;
+/// Of a film's clip read at most from each chapter tried (Order of the Phoenix's pop-up: 8 MB from its second).
+const JUMP_READ: u64 = 16 << 20;
+
 /// A Blu-ray: a drive, or a copy of its folders.
 pub struct Disc {
     pub root: PathBuf,
@@ -177,17 +184,67 @@ impl Disc {
         navigation::menus(&self.root)
     }
 
-    /// One menu stream decoded (once: kept, for the next ask).
+    /// One menu stream decoded (once: kept, for the next ask). A menu in a clip of a film's size (JUMP_FROM) looked
+    /// for at its chapters first (Disc::menu_at_chapters), else read from the clip's start to its first whole menu.
     pub fn menu(&self, clip: &str, pid: u16) -> Result<Menu> {
         let key = (clip.to_string(), pid);
         if let Some(menu) = self.decoded.borrow().get(&key) {
             return Ok(menu.clone());
         }
         let path = stream::clip_path(&self.root, clip);
-        let segments = stream::menu_segments(&path, pid, self.decrypt.as_deref())?;
+        let segments = match self.menu_at_chapters(clip, pid, &path) {
+            Some(segments) => segments,
+            None => stream::menu_segments(&path, pid, self.decrypt.as_deref())?,
+        };
         let menu = Menu::from_segments(&segments)?;
         self.decoded.borrow_mut().insert(key, menu.clone());
         Ok(menu)
+    }
+
+    /// A menu carried in a film's clip, found where a player may jump in, not by reading the film from its start: a
+    /// pop-up is sent again at chapters, for a viewer skipping to one (Order of the Phoenix's at each from the second,
+    /// its first 4 minutes in: a gigabyte read from the start, 25 MB this way). The chapter marks of every playlist
+    /// naming the stream, in that clip, in time order; each one's entry point (the clip's entry-point map), read from
+    /// there JUMP_READ at most (stream::menu_segments_at: a whole set that starts the menu or repeats it); JUMP_TRIES
+    /// chapters at most. None: a clip too small to need it, no index or marks to go by, or no whole set found.
+    fn menu_at_chapters(&self, clip: &str, pid: u16, path: &Path) -> Option<Vec<stream::Segment>> {
+        if std::fs::metadata(path).ok()?.len() < JUMP_FROM {
+            return None;
+        }
+        let info = navigation::find(&self.root, &["BDMV", "CLIPINF", &format!("{clip}.clpi")])?;
+        let points = navigation::entry_points(&std::fs::read(info).ok()?).ok()?;
+        let mut times = Vec::new();
+        for s in self.menus().ok()?.iter().filter(|s| s.clip == clip && s.pid == pid) {
+            for playlist in &s.playlists {
+                let Some(file) = navigation::find(&self.root, &["BDMV", "PLAYLIST", &format!("{playlist}.mpls")]) else {
+                    continue;
+                };
+                let Ok(marks) = std::fs::read(file).map_err(Error::from).and_then(|d| navigation::playlist_marks(&d)) else {
+                    continue;
+                };
+                times.extend(marks.into_iter().filter(|(c, _)| c == clip).map(|(_, t)| t));
+            }
+        }
+        times.sort_unstable();
+        times.dedup();
+        let mut tried = Vec::new();
+        for t in times {
+            let i = points.partition_point(|&(pts, _)| pts <= t);
+            let Some(&(_, packet)) = i.checked_sub(1).and_then(|i| points.get(i)) else { continue };
+            if tried.contains(&packet) {
+                continue;
+            }
+            if tried.len() >= JUMP_TRIES {
+                break;
+            }
+            tried.push(packet);
+            match stream::menu_segments_at(path, pid, self.decrypt.as_deref(), packet as u64 * 192, JUMP_READ) {
+                Ok(Some(segments)) => return Some(segments),
+                Ok(None) => continue,
+                Err(_) => return None,
+            }
+        }
+        None
     }
 
     /// A stretch of a clip's file, decrypted as the disc was opened to (stream::read_clip): from `offset`
