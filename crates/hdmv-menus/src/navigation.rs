@@ -204,6 +204,85 @@ pub fn playlist_menus(data: &[u8]) -> Result<Vec<(String, u16, String)>> {
         .collect())
 }
 
+/// A playlist's chapter marks (its entry marks), each with the clip it falls in (its play item's) and its time on
+/// that clip's clock, 90 kHz: where a player jumps to, and so where a film's pop-up menu is sent again (Order of
+/// the Phoenix's, at each chapter from the second).
+pub fn playlist_marks(data: &[u8]) -> Result<Vec<(String, u64)>> {
+    if data.get(..4) != Some(b"MPLS") {
+        return format("not an MPLS playlist");
+    }
+    let mut r = Reader::at(data, 8);
+    let pl = r.u32()? as usize;
+    let marks = r.u32()? as usize;
+    let mut r = Reader::at(data, pl + 6);
+    let n_items = r.u16()?;
+    r.skip(2)?;
+    let mut items = Vec::new();
+    for _ in 0..n_items {
+        let length = r.u16()? as usize;
+        let item = r.bytes(length)?;
+        items.push(String::from_utf8_lossy(item.get(0..5).unwrap_or(b"")).into_owned());
+    }
+    let mut r = Reader::at(data, marks + 4);
+    let n = r.u16()?;
+    let mut out = Vec::new();
+    for _ in 0..n {
+        let e = r.bytes(14)?;
+        let item = u16::from_be_bytes([e[2], e[3]]) as usize;
+        let time = u32::from_be_bytes([e[4], e[5], e[6], e[7]]) as u64 * 2; // (45 kHz on the disc)
+        if e[1] == 1 {
+            if let Some(clip) = items.get(item) {
+                out.push((clip.clone(), time));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// A clip's entry points, from its clip information file's entry-point map (its first stream's: the video):
+/// each one's time (90 kHz, the clip's clock) and source packet number, in order. Where a player can start
+/// decoding the video; a chapter is one.
+pub fn entry_points(data: &[u8]) -> Result<Vec<(u64, u32)>> {
+    if data.get(..4) != Some(b"HDMV") {
+        return format("not a clip information file");
+    }
+    let mut r = Reader::at(data, 16);
+    let cpi = r.u32()? as usize;
+    let ep = cpi + 6; // (its length, 4; reserved and its type, 2)
+    let mut r = Reader::at(data, ep + 1);
+    if r.u8()? == 0 {
+        return Ok(vec![]);
+    }
+    let head = r.bytes(12)?;
+    let bits = u128::from_be_bytes({
+        let mut b = [0u8; 16];
+        b[6..].copy_from_slice(&head[2..12]);
+        b
+    });
+    let n_coarse = ((bits >> 50) & 0xFFFF) as usize;
+    let n_fine = ((bits >> 32) & 0x3FFFF) as usize;
+    let base = ep + (bits & 0xFFFF_FFFF) as usize;
+    let mut r = Reader::at(data, base);
+    let fine_at = base + r.u32()? as usize;
+    let mut coarse = Vec::with_capacity(n_coarse);
+    for _ in 0..n_coarse {
+        let b = r.bytes(8)?;
+        let v = u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
+        coarse.push((((v >> 46) & 0x3FFFF) as usize, (v >> 32) & 0x3FFF, (v & 0xFFFF_FFFF) as u32));
+    }
+    let mut out = Vec::with_capacity(n_fine);
+    for (i, &(first, pts_c, spn_c)) in coarse.iter().enumerate() {
+        let last = coarse.get(i + 1).map(|c| c.0).unwrap_or(n_fine);
+        let mut f = Reader::at(data, fine_at + first * 4);
+        for _ in first..last {
+            let v = f.u32()?;
+            let (pts_f, spn_f) = (((v >> 17) & 0x7FF) as u64, v & 0x1FFFF);
+            out.push(((pts_c << 19) | (pts_f << 9), (spn_c & !0x1FFFF) | spn_f));
+        }
+    }
+    Ok(out)
+}
+
 /// Every interactive-graphics stream the disc's playlists name, one per clip and PID.
 pub fn menus(root: &Path) -> Result<Vec<MenuStream>> {
     let Some(dir) = find(root, &["BDMV", "PLAYLIST"]) else { return Ok(vec![]) };
@@ -228,4 +307,99 @@ pub fn menus(root: &Path) -> Result<Vec<MenuStream>> {
         }
     }
     Ok(order.into_iter().filter_map(|k| seen.remove(&k)).collect())
+}
+
+#[cfg(test)]
+mod jump_tests {
+    use super::*;
+
+    /// A playlist of two play items (clips 00000 and 00001) and three marks: two chapters in the first item, a
+    /// link point (not a chapter), a chapter in the second.
+    fn playlist() -> Vec<u8> {
+        let item = |clip: &[u8]| {
+            let mut b = clip.to_vec();
+            b.extend_from_slice(b"M2TS");
+            b.resize(40, 0);
+            let mut out = (b.len() as u16).to_be_bytes().to_vec();
+            out.extend(b);
+            out
+        };
+        let mut pl = vec![0u8; 4]; // (its length)
+        pl.extend_from_slice(&[0, 0]);
+        pl.extend_from_slice(&2u16.to_be_bytes()); // two play items
+        pl.extend_from_slice(&0u16.to_be_bytes()); // no sub-paths
+        pl.extend(item(b"00000"));
+        pl.extend(item(b"00001"));
+        let mark = |kind: u8, item: u16, time: u32| {
+            let mut e = vec![0, kind];
+            e.extend_from_slice(&item.to_be_bytes());
+            e.extend_from_slice(&time.to_be_bytes());
+            e.extend_from_slice(&[0xFF, 0xFF, 0, 0, 0, 0]);
+            e
+        };
+        let mut marks = vec![0u8; 4];
+        marks.extend_from_slice(&4u16.to_be_bytes());
+        for e in [mark(1, 0, 45_000), mark(1, 0, 12_015_000), mark(2, 0, 50_000), mark(1, 1, 900_000)] {
+            marks.extend(e);
+        }
+        let mut d = b"MPLS0200".to_vec();
+        let pl_at = 20u32;
+        let marks_at = pl_at + pl.len() as u32;
+        d.extend_from_slice(&pl_at.to_be_bytes());
+        d.extend_from_slice(&marks_at.to_be_bytes());
+        d.resize(pl_at as usize, 0);
+        d.extend(pl);
+        d.extend(marks);
+        d
+    }
+
+    #[test]
+    fn a_playlists_chapters_with_their_clips_and_times() {
+        let got = playlist_marks(&playlist()).unwrap();
+        assert_eq!(got, vec![("00000".into(), 90_000), ("00000".into(), 24_030_000), ("00001".into(), 1_800_000)]);
+        assert!(playlist_marks(b"nothing").is_err());
+    }
+
+    /// A clip information file whose entry-point map holds two coarse entries and three fine ones.
+    fn clip_info(points: &[(u64, u32)]) -> Vec<u8> {
+        // fine entries grouped under coarse ones: a coarse entry whenever the coarse parts change
+        let mut coarse: Vec<(usize, u64, u32)> = Vec::new();
+        let mut fine = Vec::new();
+        for (i, &(pts, spn)) in points.iter().enumerate() {
+            let (pc, sc) = (pts >> 19, spn & !0x1FFFF);
+            if coarse.last().map(|c| (c.1, c.2 & !0x1FFFF)) != Some((pc & 0x3FFF, sc)) {
+                coarse.push((i, pc & 0x3FFF, spn));
+            }
+            fine.push((((pts >> 9) & 0x7FF) as u32) << 17 | (spn & 0x1FFFF));
+        }
+        let mut stream = Vec::new();
+        let fine_start = 4 + coarse.len() as u32 * 8;
+        stream.extend_from_slice(&fine_start.to_be_bytes());
+        for &(first, pc, spn) in &coarse {
+            let v = (first as u64) << 46 | pc << 32 | spn as u64;
+            stream.extend_from_slice(&v.to_be_bytes());
+        }
+        for f in &fine {
+            stream.extend_from_slice(&f.to_be_bytes());
+        }
+        let mut ep = vec![0u8, 1]; // one stream
+        let head = (0x1011u128) << 80 | (coarse.len() as u128) << 50 | (fine.len() as u128) << 32 | 14;
+        ep.extend_from_slice(&head.to_be_bytes()[4..]);
+        ep.extend(stream);
+        let mut d = b"HDMV0200".to_vec();
+        d.resize(16, 0);
+        d.extend_from_slice(&40u32.to_be_bytes()); // the CPI's start
+        d.resize(40, 0);
+        d.extend_from_slice(&(2 + ep.len() as u32).to_be_bytes());
+        d.extend_from_slice(&[0, 1]);
+        d.extend(ep);
+        d
+    }
+
+    #[test]
+    fn a_clips_entry_points_from_its_coarse_and_fine_tables() {
+        let points = vec![(90_000u64 & !0x1FF, 0u32), (24_030_000 & !0x1FF, 5_000_000), (24_120_000 & !0x1FF, 5_000_400)];
+        assert_eq!(entry_points(&clip_info(&points)).unwrap(), points);
+        assert!(entry_points(b"nothing").is_err());
+    }
 }
