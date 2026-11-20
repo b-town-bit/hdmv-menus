@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.4 (2026-11-20)
 
 - A menu carried in a film's own clip (512 MB or more) is looked for at its chapters before the film is read from
   its start: a film sends its menu again where a viewer may jump in. The chapter marks of every playlist naming
